@@ -1,5 +1,5 @@
 from node import Node
-from subtree_balancer import Subtree_Balancer
+from subtree_balancer import Subtree_Balancer_DDL_BST as Subtree_Balancer
 
 class Splay_Tree:
     def __init__(self, root = None, header = Node(None)):
