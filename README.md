@@ -43,7 +43,7 @@ This combination makes it efficient for scenarios where some items are accessed 
 4. Run:
 
    ```bash
-   python splay_tree.py
+   python stbst_height_rotation.py
 
 
 ## Complexity comparision
