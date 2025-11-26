@@ -1,0 +1,630 @@
+from typing import List, Optional, Callable
+
+
+class Node:
+    """
+    Represents a single node in the Splay Tree.
+
+    Attributes
+    ----------
+    key : int
+        The integer key stored in the node.
+    left : Optional[Node]
+        Pointer to the left child node.
+    right : Optional[Node]
+        Pointer to the right child node.
+    """
+    __slots__ = ("key", "left", "right")
+
+    def __init__(self, key: int) -> None:
+        """
+        Initialize a node.
+
+        Parameters
+        ----------
+        key : int
+            The key to store in this node.
+        """
+        self.key: int = key
+        self.left: Optional[Node] = None
+        self.right: Optional[Node] = None
+
+
+class SplayTree:
+    """
+    Hybrid Splay Tree with AVL-balanced left and right subtrees of the root.
+
+    Core logic
+    ----------
+    1) Splaying:
+       - The splay operation rotates a target node (or the closest node to a
+         searched/insertion key) to the root using Zig/Zig-Zig/Zig-Zag patterns.
+       - This gives strong recency performance: recently accessed keys become
+         the root and are cheap to access again.
+
+    2) AVL balancing (of root subtrees only):
+       - After insert/search/delete, the left and right subtrees of the root
+         are recursively balanced with AVL rotations (LL, LR, RR, RL).
+       - The root itself is NOT rebalanced to preserve splay semantics.
+       - This yields a hybrid behavior: recency at the root, structurally
+         balanced subtrees for efficient searches off-root.
+
+    Design trade-offs
+    -----------------
+    - Pure splay trees can become skewed with certain patterns. By balancing
+      the root’s subtrees, we keep local structure healthy while maintaining
+      splay’s access heuristic.
+    - We do not maintain AVL metadata (like heights) at each node; instead,
+      we compute height on demand during balancing for simplicity.
+
+    Examples
+    --------
+    >>> tree = SplayTree()
+    >>> tree.insert(10); tree.insert(20); tree.insert(30)
+    >>> tree.inorder()
+    [10, 20, 30]
+    >>> node = tree.search(20)
+    >>> node.key
+    20
+    >>> tree.delete(10)
+    >>> tree.inorder()
+    [20, 30]
+    """
+
+    def __init__(self) -> None:
+        """Initialize an empty splay tree."""
+        self.root: Optional[Node] = None
+
+    # ------------------------------------------------------------
+    # Utility functions
+    # ------------------------------------------------------------
+    def _height(self, node: Optional[Node]) -> int:
+        """
+        Compute the height of a subtree.
+
+        Parameters
+        ----------
+        node : Optional[Node]
+            Root of the subtree.
+
+        Returns
+        -------
+        int
+            Height (0 for None).
+        """
+        if node is None:
+            return 0
+        return 1 + max(self._height(node.left), self._height(node.right))
+
+    def _balance_factor(self, node: Optional[Node]) -> int:
+        """
+        Compute the balance factor of a node.
+
+        Parameters
+        ----------
+        node : Optional[Node]
+            Node to compute balance factor for.
+
+        Returns
+        -------
+        int
+            bf = height(left) - height(right); 0 if node is None.
+        """
+        if node is None:
+            return 0
+        return self._height(node.left) - self._height(node.right)
+
+    # ------------------------------------------------------------
+    # Rotations
+    # ------------------------------------------------------------
+    def _right_rotate(self, y: Node) -> Node:
+        """
+        Right rotation around y.
+
+        Before:
+            y
+           /
+          x
+           \
+            T2
+
+        After:
+            x
+             \
+              y
+             /
+            T2
+
+        Parameters
+        ----------
+        y : Node
+            Node to rotate.
+
+        Returns
+        -------
+        Node
+            New root of the rotated subtree.
+        """
+        x = y.left
+        if x is None:
+            return y
+        T2 = x.right
+        # Perform rotation
+        x.right = y
+        y.left = T2
+        return x
+
+    def _left_rotate(self, x: Node) -> Node:
+        """
+        Left rotation around x.
+
+        Before:
+          x
+           \
+            y
+           /
+          T2
+
+        After:
+            y
+           /
+          x
+           \
+            T2
+
+        Parameters
+        ----------
+        x : Node
+            Node to rotate.
+
+        Returns
+        -------
+        Node
+            New root of the rotated subtree.
+        """
+        y = x.right
+        if y is None:
+            return x
+        T2 = y.left
+        # Perform rotation
+        y.left = x
+        x.right = T2
+        return y
+
+    # ------------------------------------------------------------
+    # AVL balancing (recursive, post-order)
+    # ------------------------------------------------------------
+    def _balance_recursive(self, node: Optional[Node]) -> Optional[Node]:
+        """
+        Recursively balance a subtree using AVL rotations.
+
+        Parameters
+        ----------
+        node : Optional[Node]
+            Root of the subtree to balance.
+
+        Returns
+        -------
+        Optional[Node]
+            New root of the balanced subtree.
+        """
+        if node is None:
+            return None
+
+        # First balance children (post-order traversal)
+        node.left = self._balance_recursive(node.left)
+        node.right = self._balance_recursive(node.right)
+
+        # Then balance the current node
+        bf = self._balance_factor(node)
+
+        if bf > 1:
+            # Left heavy: decide LL or LR
+            if self._balance_factor(node.left) < 0:
+                # LR case: rotate left on left child, then right
+                node.left = self._left_rotate(node.left)
+            node = self._right_rotate(node)  # LL case
+
+        elif bf < -1:
+            # Right heavy: decide RR or RL
+            if self._balance_factor(node.right) > 0:
+                # RL case: rotate right on right child, then left
+                node.right = self._right_rotate(node.right)
+            node = self._left_rotate(node)  # RR case
+
+        return node
+
+    def _balance_root_subtrees(self) -> None:
+        """
+        Balance only the root’s left and right subtrees.
+        The root itself is intentionally ignored to preserve splay behavior.
+        """
+        if self.root is None:
+            return
+        if self.root.left is not None:
+            self.root.left = self._balance_recursive(self.root.left)
+        if self.root.right is not None:
+            self.root.right = self._balance_recursive(self.root.right)
+
+    # ------------------------------------------------------------
+    # Splaying
+    # ------------------------------------------------------------
+    def _splay(self, root: Optional[Node], key: int) -> Optional[Node]:
+        """
+        Splay the node with `key` to the root if present; otherwise splay the
+        last accessed node along the path to where `key` would be.
+
+        Parameters
+        ----------
+        root : Optional[Node]
+            Current root of the subtree being splayed.
+        key : int
+            Target key to bring to root.
+
+        Returns
+        -------
+        Optional[Node]
+            New root after splaying.
+        """
+        if root is None or root.key == key:
+            return root
+
+        # Key in left subtree
+        if key < root.key:
+            if root.left is None:
+                return root
+
+            if key < root.left.key:
+                # Zig-Zig: splay into left-left; then rotate root right
+                root.left.left = self._splay(root.left.left, key)
+                root = self._right_rotate(root)
+            elif key > root.left.key:
+                # Zig-Zag: splay into left-right; rotate left child left
+                root.left.right = self._splay(root.left.right, key)
+                if root.left.right is not None:
+                    root.left = self._left_rotate(root.left)
+            # Final zig
+            return root if root.left is None else self._right_rotate(root)
+
+        # Key in right subtree
+        else:
+            if root.right is None:
+                return root
+
+            if key < root.right.key:
+                # Zag-Zig: splay into right-left; rotate right child right
+                root.right.left = self._splay(root.right.left, key)
+                if root.right.left is not None:
+                    root.right = self._right_rotate(root.right)
+            elif key > root.right.key:
+                # Zag-Zag: splay into right-right; rotate root left
+                root.right.right = self._splay(root.right.right, key)
+                root = self._left_rotate(root)
+            # Final zag
+            return root if root.right is None else self._left_rotate(root)
+
+    def _splay_max(self, node: Optional[Node]) -> Optional[Node]:
+        """
+        Splay the maximum element of a subtree to its root.
+
+        Parameters
+        ----------
+        node : Optional[Node]
+            Root of the subtree.
+
+        Returns
+        -------
+        Optional[Node]
+            New root where the maximum element is at the root,
+            or None if subtree is empty.
+        """
+        if node is None:
+            return None
+        # Splaying with +inf naturally walks down the right spine.
+        return self._splay(node, float('inf'))
+
+    # ------------------------------------------------------------
+    # Public operations
+    # ------------------------------------------------------------
+    def insert(self, key: int) -> None:
+        """
+        Insert a key into the splay tree.
+
+        Parameters
+        ----------
+        key : int
+            Key to insert.
+
+        Returns
+        -------
+        None
+        """
+        if self.root is None:
+            self.root = Node(key)
+            return
+
+        # Splay the key (or closest node) to root
+        self.root = self._splay(self.root, key)
+
+        # If key already present, just balance subtrees and return
+        if self.root.key == key:
+            self._balance_root_subtrees()
+            return
+
+        # Create a new root and reattach children
+        new_root = Node(key)
+        if key < self.root.key:
+            new_root.left = self.root.left
+            new_root.right = self.root
+            self.root.left = None
+        else:
+            new_root.right = self.root.right
+            new_root.left = self.root
+            self.root.right = None
+
+        self.root = new_root
+        self._balance_root_subtrees()
+
+    def search(self, key: int) -> Optional[Node]:
+        """
+        Search for a key in the tree and splay it to root if found.
+
+        Parameters
+        ----------
+        key : int
+            Key to search.
+
+        Returns
+        -------
+        Optional[Node]
+            The root node if the key is found (root.key == key), else None.
+        """
+        self.root = self._splay(self.root, key)
+        self._balance_root_subtrees()
+        return self.root if (self.root and self.root.key == key) else None
+
+    def delete(self, key: int) -> None:
+        """
+        Delete a key from the tree.
+
+        Parameters
+        ----------
+        key : int
+            Key to delete.
+
+        Returns
+        -------
+        None
+        """
+        if self.root is None:
+            return
+
+        # Bring key to root if it exists
+        self.root = self._splay(self.root, key)
+        if self.root is None or self.root.key != key:
+            return  # not found
+
+        # Remove the root and merge left/right subtrees
+        left, right = self.root.left, self.root.right
+        self.root = None
+
+        if left is None:
+            self.root = right
+        else:
+            # Splay max of left to top and attach right
+            left = self._splay_max(left)
+            left.right = right
+            self.root = left
+
+        self._balance_root_subtrees()
+
+    def inorder(self) -> List[int]:
+        """
+        Return the inorder traversal of the tree (sorted keys).
+
+        This uses an iterative traversal with a cycle guard (visited set).
+        Under correct structure, no cycles should exist. The guard ensures
+        traversal won’t crash even if a mislink occurs during development.
+
+        Returns
+        -------
+        List[int]
+            Sorted list of keys.
+        """
+        res: List[int] = []
+        stack: List[Node] = []
+        visited = set()
+        node = self.root
+
+        while stack or node:
+            while node:
+                nid = id(node)
+                if nid in visited:
+                    # If a cycle is detected, return what we have so far.
+                    # In production, you might raise an exception instead.
+                    return res
+                visited.add(nid)
+                stack.append(node)
+                node = node.left
+            node = stack.pop()
+            res.append(node.key)
+            node = node.right
+
+        return res
+
+    # ------------------------------------------------------------
+    # Sanity checks (optional diagnostics)
+    # ------------------------------------------------------------
+    def check_cycles(self) -> bool:
+        """
+        Detect cycles in the current tree (diagnostic).
+
+        Returns
+        -------
+        bool
+            True if a cycle is detected, False otherwise.
+        """
+        def dfs(n: Optional[Node], seen: set) -> bool:
+            if n is None:
+                return False
+            nid = id(n)
+            if nid in seen:
+                return True
+            seen.add(nid)
+            return dfs(n.left, seen) or dfs(n.right, seen)
+
+        return dfs(self.root, set())
+
+    def is_bst(self) -> bool:
+        """
+        Verify BST property by checking that inorder is strictly increasing.
+
+        Returns
+        -------
+        bool
+            True if BST property holds, False otherwise.
+        """
+        arr = self.inorder()
+        return all(arr[i] < arr[i + 1] for i in range(len(arr) - 1))
+
+
+# ------------------------------------------------------------
+# Test harness utilities
+# ------------------------------------------------------------
+def check(actual, expected, msg: str = "") -> None:
+    """
+    Print expected/actual values and assert equality.
+
+    Parameters
+    ----------
+    actual : Any
+        The actual value obtained from the code.
+    expected : Any
+        The expected value to compare against.
+    msg : str
+        Short message describing the test.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    AssertionError
+        If actual != expected.
+    """
+    print(f"{msg} | Expected: {expected}, Actual: {actual}")
+    assert actual == expected, f"{msg} failed: expected {expected}, got {actual}"
+
+
+def assert_invariants(tree: SplayTree, msg: str = "") -> None:
+    """
+    Assert structural invariants and print diagnostics.
+
+    Parameters
+    ----------
+    tree : SplayTree
+        The tree to check.
+    msg : str
+        Context message for the check.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    AssertionError
+        If cycles are detected or BST property is violated.
+    """
+    print(f"Invariants check: {msg} | cycles={tree.check_cycles()} | inorder={tree.inorder()}")
+    assert not tree.check_cycles(), f"Cycle detected: {msg}"
+    assert tree.is_bst(), f"BST property violated: {msg}"
+
+
+# ------------------------------------------------------------
+# Test suite
+# ------------------------------------------------------------
+def run_tests() -> None:
+    """
+    Run multiple test cases to validate the hybrid splay + AVL subtree logic.
+
+    The tests print expected vs actual for clarity and assert correctness.
+
+    Returns
+    -------
+    None
+    """
+    # Test 1: Basic insertions
+    tree = SplayTree()
+    for val in [10, 20, 30, 40, 50]:
+        tree.insert(val)
+        assert_invariants(tree, f"insert {val}")
+    check(tree.inorder(), [10, 20, 30, 40, 50], "Test 1 Inorder")
+    check(tree.root.key if tree.root else None, 50, "Test 1 Root")
+
+    # Test 2: Search behavior
+    node = tree.search(30)
+    assert_invariants(tree, "search 30")
+    check(tree.root.key if tree.root else None, 30, "Test 2 Root after search(30)")
+    check(tree.inorder(), [10, 20, 30, 40, 50], "Test 2 Inorder")
+    check(node.key if node else None, 30, "Test 2 search return")
+
+    # Test 3: Deletion
+    tree.delete(20)
+    assert_invariants(tree, "delete 20")
+    check(tree.inorder(), [10, 30, 40, 50], "Test 3 Inorder after delete(20)")
+
+    # Test 4: Mixed insert/delete
+    for val in [25, 5, 35]:
+        tree.insert(val)
+        assert_invariants(tree, f"insert {val}")
+    check(tree.inorder(), [5, 10, 25, 30, 35, 40, 50], "Test 4 Inorder after inserts")
+    tree.search(25)
+    assert_invariants(tree, "search 25")
+    check(tree.root.key if tree.root else None, 25, "Test 4 Root after search(25)")
+    tree.delete(40)
+    assert_invariants(tree, "delete 40")
+    check(tree.inorder(), [5, 10, 25, 30, 35, 50], "Test 4 Inorder after delete(40)")
+
+    # Test 5: Single-node edge cases
+    single = SplayTree()
+    single.insert(100)
+    assert_invariants(single, "single insert 100")
+    check(single.root.key if single.root else None, 100, "Test 5 Root")
+    node = single.search(100)
+    assert_invariants(single, "single search 100")
+    check(node.key if node else None, 100, "Test 5 search return")
+    single.delete(100)
+    assert_invariants(single, "single delete 100")
+    check(single.inorder(), [], "Test 5 Inorder after delete")
+
+    # Test 6: Repeated access pattern (recency focus)
+    rep = SplayTree()
+    for v in [10, 20, 30, 40, 50]:
+        rep.insert(v)
+        assert_invariants(rep, f"rep insert {v}")
+    for _ in range(3):
+        rep.search(10)
+        assert_invariants(rep, "rep search 10")
+    check(rep.root.key if rep.root else None, 10, "Test 6 Root after repeated search(10)")
+    check(rep.inorder(), [10, 20, 30, 40, 50], "Test 6 Inorder")
+
+    # Test 7: Stress test (1..15)
+    stress = SplayTree()
+    for v in range(1, 16):
+        stress.insert(v)
+        assert_invariants(stress, f"stress insert {v}")
+    check(stress.inorder(), list(range(1, 16)), "Test 7 Inorder after inserts")
+    stress.search(8)
+    assert_invariants(stress, "stress search 8")
+    check(stress.root.key if stress.root else None, 8, "Test 7 Root after search(8)")
+    stress.delete(5)
+    assert_invariants(stress, "stress delete 5")
+    check(stress.inorder(), [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], "Test 7 Inorder after delete(5)")
+
+    print("All tests passed (no cycles, BST property upheld).")
+
+
+if __name__ == "__main__":
+    run_tests()
