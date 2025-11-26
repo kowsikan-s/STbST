@@ -1,4 +1,4 @@
-# Hybrid Splay Tree with Balanced Subtrees
+# Sub-Tree balanced Splay Tree
 
 ## What is this project?
 
@@ -44,3 +44,13 @@ This combination makes it efficient for scenarios where some items are accessed 
 
    ```bash
    python splay_tree.py
+
+
+## Complexity comparision
+| Operation  | Standard Splay Tree                  | Hybrid (with balancing) | Balancing Step Alone   |
+|------------|--------------------------------------|-------------------------|------------------------|
+| Insert     | Amortized O(log n), worst O(n)       | Worst O(n)              | O(n^2) worst           |
+| Search     | Amortized O(log n), worst O(n)       | Worst O(n)              | O(n^2) worst           |
+| Delete     | Amortized O(log n), worst O(n)       | Worst O(n)              | O(n^2) worst           |
+| Traversal  | O(n)                                 | O(n)                    | N/A                    |
+| Space      | O(n)                                 | O(n)                    | O(n)                   |
